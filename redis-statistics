@@ -1,0 +1,86 @@
+#!/usr/bin/env php
+<?php
+$host = $argv[1] ?? null;
+$db = $argv[2] ?? null;
+
+if ($host === null || $db === null) {
+    exit('Usage: redis-statistics ip:port dbNumber');
+}
+list($host, $port) = explode(':', $host);
+
+$redis = new \Redis();
+
+try {
+    $redis->connect($host, $port);
+} catch (\RedisException $e) {
+    exit($e->getMessage());
+}
+
+// select
+$redis->select((int)$db);
+$keysArr = $redis->keys('*');
+
+
+$total = 0;
+foreach ($keysArr as $key) {
+    $total += getKeyDataTotal($redis, $key);
+}
+
+$ktotal = $total/1024;
+$mtotal = $ktotal/1024;
+$gtotal = $mtotal/1024;
+
+echo "Total: {$total} Bytes nearly".PHP_EOL;
+echo "Total: {$ktotal} KBytes nearly".PHP_EOL;
+echo "Total: {$mtotal} MBytes nearly".PHP_EOL;
+echo "Total: {$gtotal} GBytes nearly".PHP_EOL;
+
+function getKeyDataTotal($redis, $key)
+{
+    $total = 0;
+    switch ($redis->type($key)) {
+        case \Redis::REDIS_STRING:
+            $total = strlen($redis->get($key));
+            break;
+        case \Redis::REDIS_SET:
+            $sets = $redis->sMembers($key);
+            foreach ($sets as $set) {
+                $m = $redis->get($set);
+                $total += strlen($m);
+            }
+            break;
+        case \Redis::REDIS_LIST:
+            $listSize = $redis->lSize($key);
+
+            $index = $i = 0;
+            while($i < $listSize) {
+                $content = $redis->lIndex($key, $index);
+                if ($content !== false) {
+                    $i++;
+                }
+                $total += strlen($content);
+                $index++;
+            }
+            break;
+        case \Redis::REDIS_ZSET:
+            $zSetEnd = $redis->zCard($key);
+            $zSet = $redis->zRange($key, 0, $zSetEnd);
+            foreach($zSet as $item) {
+                $total += strlen($item);
+            }
+            break;
+        case \Redis::REDIS_HASH:
+            $hKeys = $redis->hKeys($key);
+
+            foreach ($hKeys as $hKey) {
+                $item = $redis->hGet($key, $hKey);
+                $total += strlen($item);
+            }
+            break;
+        case \Redis::REDIS_NOT_FOUND:
+            echo "others key: {$key}".PHP_EOL;
+            echo "--------------".PHP_EOL;
+            break;
+    }
+    return $total;
+}
